@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+/*import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 
 import 'database/dbhelper.dart';
@@ -157,11 +157,6 @@ class _MyHomePageState extends State<MyHomePage> {
         latitude: latitude,
         longitude: longitude,
       ));
-
-      if (similarityPercentage != null && similarityPercentage! >= 0.71) {
-        // Indicate that coordinates are adjusted based on a matching address
-        print("Coordinates adjusted based on a matching address.");
-      }
     } else {
       setState(() {
         latitude = 0.0;
