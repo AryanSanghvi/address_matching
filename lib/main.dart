@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
-
 import 'database/dbhelper.dart';
 
 void main() {
@@ -29,10 +28,11 @@ class _MyHomePageState extends State<MyHomePage> {
   String city = "";
   String country = "";
   String pinCode = "";
-
   double latitude = 0.0;
   double longitude = 0.0;
   double? similarityPercentage;
+  int? adjustedAddressId1;
+  int? adjustedAddressId2;
 
   @override
   Widget build(BuildContext context) {
@@ -102,19 +102,47 @@ class _MyHomePageState extends State<MyHomePage> {
                 child: Text("Convert"),
               ),
               SizedBox(height: 16),
-              Text(
-                "Latitude: $latitude",
-                style: TextStyle(fontSize: 16),
-              ),
-              Text(
-                "Longitude: $longitude",
-                style: TextStyle(fontSize: 16),
-              ),
-              if (similarityPercentage != null)
-                Text(
-                  "Similarity Percentage: ${(similarityPercentage! * 100)
-                      .toStringAsFixed(2)}%",
-                  style: TextStyle(fontSize: 16),
+              if (adjustedAddressId1 != null && adjustedAddressId2 != null)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Adjusted Latitude: ${latitude.toString()} (${adjustedAddressId1.toString()} and ${adjustedAddressId2.toString()})",
+                      style: TextStyle(fontSize: 16),
+                    ),
+                    Text(
+                      "Longitude: ${longitude.toString()}",
+                      style: TextStyle(fontSize: 16),
+                    ),
+                    if (similarityPercentage != null)
+                      Text(
+                        "Adjusted Similarity Percentage: ${(similarityPercentage! * 100).toStringAsFixed(2)}%",
+                        style: TextStyle(fontSize: 16),
+                      ),
+                    Text(
+                      "IDs: ${adjustedAddressId1.toString()} and ${adjustedAddressId2.toString()}",
+                      style: TextStyle(fontSize: 16),
+                    ),
+                  ],
+                ),
+              if (adjustedAddressId1 == null || adjustedAddressId2 == null)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Latitude: ${latitude.toString()}",
+                      style: TextStyle(fontSize: 16),
+                    ),
+                    Text(
+                      "Longitude: ${longitude.toString()}",
+                      style: TextStyle(fontSize: 16),
+                    ),
+                    if (similarityPercentage != null)
+                      Text(
+                        "Similarity Percentage: ${(similarityPercentage! * 100).toStringAsFixed(2)}%",
+                        style: TextStyle(fontSize: 16),
+                      ),
+                  ],
                 ),
             ],
           ),
@@ -124,28 +152,75 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void convertAddressToLatLng() async {
-    String address = "$doorNumber, $building, $street, $area, $city, $country, $pinCode";
+    String address =
+        "$doorNumber, $building, $street, $area, $city, $country, $pinCode";
+    address=address.toLowerCase();
     List<Location> locations = await locationFromAddress(address);
-
+    doorNumber=doorNumber.toLowerCase();
+    building=building.toLowerCase();
+    street=street.toLowerCase();
+    area=area.toLowerCase();
+    city=city.toLowerCase();
+    country=country.toLowerCase();
+    pinCode=pinCode.toLowerCase();
     if (locations.isNotEmpty) {
       setState(() {
         latitude = locations[0].latitude;
         longitude = locations[0].longitude;
       });
-
       double? percentage = await calculateSimilarity();
       setState(() {
         similarityPercentage = percentage;
       });
 
-      // Check if similarity percentage is 100%
       if (similarityPercentage != null && similarityPercentage == 1.0) {
         print(
             "Address already exists with 100% similarity. Not saving to database.");
-        return; // Exit without saving to the database
+        return;
       }
 
-      // Insert address into the database
+      if (similarityPercentage != null && similarityPercentage! >= 0.71&& similarityPercentage!=1.0) {
+        List<Address> savedAddresses = await DatabaseHelper.getAddresses();
+        List<Address> similarAddresses = savedAddresses.where((address) => calculateSimilarityCount(address) >= 5).toList();
+
+        if (similarAddresses.length >= 2) {
+          // Sort addresses by similarity to the new address
+          similarAddresses.sort(
+                  (a, b) => calculateSimilarityCount(b).compareTo(calculateSimilarityCount(a)));
+
+          // Use the coordinates of the two most similar addresses to estimate the new address coordinates
+          Address firstSimilarAddress = similarAddresses[0];
+          Address secondSimilarAddress = similarAddresses[1];
+
+          // Calculate average latitude and longitude of the two similar addresses
+          double avgLatitude =
+              (firstSimilarAddress.latitude + secondSimilarAddress.latitude) / 2;
+          double avgLongitude =
+              (firstSimilarAddress.longitude + secondSimilarAddress.longitude) / 2;
+
+          setState(() {
+            latitude = avgLatitude;
+            longitude = avgLongitude;
+            adjustedAddressId1 = firstSimilarAddress.id;
+            adjustedAddressId2 = secondSimilarAddress.id;
+          });
+          print(
+              "Coordinates adjusted using addresses with IDs: ${firstSimilarAddress.id} and ${secondSimilarAddress.id}");
+        }
+      } else {
+        // Reset adjustedAddressId1 and adjustedAddressId2 when not using the mathematical adjustment logic
+        setState(() {
+          adjustedAddressId1 = null;
+          adjustedAddressId2 = null;
+        });
+      }
+
+      if (similarityPercentage == null || similarityPercentage! < 0.71) {
+        // Use geocoding to obtain coordinates
+        latitude = locations[0].latitude;
+        longitude = locations[0].longitude;
+      }
+
       await DatabaseHelper.insertAddress(Address(
         doorNumber: doorNumber,
         building: building,
@@ -159,8 +234,7 @@ class _MyHomePageState extends State<MyHomePage> {
       ));
 
       if (similarityPercentage != null && similarityPercentage! >= 0.71) {
-        // Indicate that coordinates are adjusted based on a matching address
-        print("Coordinates adjusted based on a matching address.");
+        print("Coordinates adjusted based on similar addresses.");
       }
     } else {
       setState(() {
@@ -177,66 +251,59 @@ class _MyHomePageState extends State<MyHomePage> {
       return null;
     }
 
-    int totalFields = 7; // Total number of address fields
-
-    // Initialize total similarity count
+    int totalFields = 7;
     int similarityCount = 0;
-    // Calculate similarity counts for each field
-    double highestPercentage = 0;
-    for (Address savedAddress in savedAddresses) {
-      int currentSimilarityCount = 0;
-      int flag = 0;
-      if (savedAddress.pinCode == pinCode && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-      if (savedAddress.country == country && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-      if (savedAddress.city == city && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-      if (savedAddress.area == area && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-      if (savedAddress.street == street && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-      if (savedAddress.building == building && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-      if (savedAddress.doorNumber == doorNumber && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
 
-      // Update total similarity count if it's higher than current similarity count
+    for (Address savedAddress in savedAddresses) {
+      int currentSimilarityCount = calculateSimilarityCount(savedAddress);
       if (currentSimilarityCount == totalFields) {
-        return 1.0; // 100% similarity
+        return 1.0;
       } else if (currentSimilarityCount > similarityCount) {
         similarityCount = currentSimilarityCount;
       }
     }
 
-    // Calculate total similarity percentage
-    //double totalSimilarityPercentage = similarityCount / totalFields;
     double similarityPercentage = similarityCount / totalFields;
-    if (similarityPercentage > highestPercentage) {
-      highestPercentage = similarityPercentage;
-      // return totalSimilarityPercentage;
+    return similarityPercentage;
+  }
+
+  int calculateSimilarityCount(Address savedAddress) {
+    int similarityCount = 0;
+    int flag = 0;
+    if (savedAddress.pinCode == pinCode && flag == 0) {
+      similarityCount++;
+    } else {
+      flag = 1;
     }
-    return highestPercentage;
+    if (savedAddress.country == country && flag == 0) {
+      similarityCount++;
+    } else {
+      flag = 1;
+    }
+    if (savedAddress.city == city && flag == 0) {
+      similarityCount++;
+    } else {
+      flag = 1;
+    }
+    if (savedAddress.area == area && flag == 0) {
+      similarityCount++;
+    } else {
+      flag = 1;
+    }
+    if (savedAddress.street == street && flag == 0) similarityCount++;
+    else {
+      flag = 1;
+    }
+    if (savedAddress.building == building && flag == 0) {
+      similarityCount++;
+    } else {
+      flag = 1;
+    }
+    if (savedAddress.doorNumber == doorNumber && flag == 0) {
+      similarityCount++;
+    } else {
+      flag = 1;
+    }
+    return similarityCount;
   }
 }

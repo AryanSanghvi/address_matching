@@ -1,237 +1,115 @@
-/*import 'package:flutter/material.dart';
-import 'package:geocoding/geocoding.dart';
+import 'package:sqflite/sqflite.dart';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart';
 
-import 'database/dbhelper.dart';
+class DatabaseHelper {
+  static Database? _database;
 
-void main() {
-  runApp(MyApp());
-}
+  static Future<Database> get database async {
+    if (_database != null) {
+      return _database!;
+    }
 
-class MyApp extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      home: MyHomePage(),
-    );
+    _database = await _initDatabase();
+    return _database!;
   }
-}
 
-class MyHomePage extends StatefulWidget {
-  @override
-  _MyHomePageState createState() => _MyHomePageState();
-}
+  static Future<Database> _initDatabase() async {
+    // Get the device's documents directory to store the database
+    Directory documentsDirectory = await getApplicationDocumentsDirectory();
+    String path = join(documentsDirectory.path, 'address_database.db');
 
-class _MyHomePageState extends State<MyHomePage> {
-  String doorNumber = "";
-  String building = "";
-  String street = "";
-  String area = "";
-  String city = "";
-  String country = "";
-  String pinCode = "";
+    // Open/create the database at a given path
+    return openDatabase(path, version: 1, onCreate: _createDatabase);
+  }
 
-  double latitude = 0.0;
-  double longitude = 0.0;
-  double? similarityPercentage;
+  static Future<void> _createDatabase(Database db, int version) async {
+    // Create the addresses table with separate columns for each address component
+    await db.execute('''
+      CREATE TABLE addresses(
+        id INTEGER PRIMARY KEY,
+        doorNumber TEXT NOT NULL,
+        building TEXT NOT NULL,
+        street TEXT NOT NULL,
+        area TEXT NOT NULL,
+        city TEXT NOT NULL,
+        country TEXT NOT NULL,
+        pinCode TEXT NOT NULL,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL
+      )
+    ''');
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text("Address to Lat/Lng Converter"),
-      ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                "Enter the address details:",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: 16),
-              TextField(
-                onChanged: (value) {
-                  doorNumber = value;
-                },
-                decoration: InputDecoration(labelText: "Door Number"),
-              ),
-              TextField(
-                onChanged: (value) {
-                  building = value;
-                },
-                decoration: InputDecoration(labelText: "Building"),
-              ),
-              TextField(
-                onChanged: (value) {
-                  street = value;
-                },
-                decoration: InputDecoration(labelText: "Street"),
-              ),
-              TextField(
-                onChanged: (value) {
-                  area = value;
-                },
-                decoration: InputDecoration(labelText: "Area"),
-              ),
-              TextField(
-                onChanged: (value) {
-                  city = value;
-                },
-                decoration: InputDecoration(labelText: "City"),
-              ),
-              TextField(
-                onChanged: (value) {
-                  country = value;
-                },
-                decoration: InputDecoration(labelText: "Country"),
-              ),
-              TextField(
-                onChanged: (value) {
-                  pinCode = value;
-                },
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: "Pin Code"),
-              ),
-              SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () {
-                  convertAddressToLatLng();
-                },
-                child: Text("Convert"),
-              ),
-              SizedBox(height: 16),
-              Text(
-                "Latitude: $latitude",
-                style: TextStyle(fontSize: 16),
-              ),
-              Text(
-                "Longitude: $longitude",
-                style: TextStyle(fontSize: 16),
-              ),
-              if (similarityPercentage != null)
-                Text(
-                  "Similarity Percentage: ${(similarityPercentage! * 100)
-                      .toStringAsFixed(2)}%",
-                  style: TextStyle(fontSize: 16),
-                ),
-            ],
-          ),
-        ),
-      ),
+  // Insert an address into the database
+  static Future<void> insertAddress(Address address) async {
+    final Database db = await database;
+    await db.insert(
+      'addresses',
+      address.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 
-  void convertAddressToLatLng() async {
-    String address = "$doorNumber, $building, $street, $area, $city, $country, $pinCode";
-    List<Location> locations = await locationFromAddress(address);
-
-    if (locations.isNotEmpty) {
-      setState(() {
-        latitude = locations[0].latitude;
-        longitude = locations[0].longitude;
-      });
-
-      double? percentage = await calculateSimilarity();
-      setState(() {
-        similarityPercentage = percentage;
-      });
-
-      // Check if similarity percentage is 100%
-      if (similarityPercentage != null && similarityPercentage == 1.0) {
-        print(
-            "Address already exists with 100% similarity. Not saving to database.");
-        return; // Exit without saving to the database
-      }
-
-      // Insert address into the database
-      await DatabaseHelper.insertAddress(Address(
-        doorNumber: doorNumber,
-        building: building,
-        street: street,
-        area: area,
-        city: city,
-        country: country,
-        pinCode: pinCode,
-        latitude: latitude,
-        longitude: longitude,
-      ));
-    } else {
-      setState(() {
-        latitude = 0.0;
-        longitude = 0.0;
-      });
-    }
+  // Retrieve all addresses from the database
+  static Future<List<Address>> getAddresses() async {
+    final Database db = await database;
+    final List<Map<String, dynamic>> maps = await db.query('addresses');
+    return List.generate(maps.length, (i) {
+      return Address(
+        id: maps[i]['id'],
+        doorNumber: maps[i]['doorNumber'],
+        building: maps[i]['building'],
+        street: maps[i]['street'],
+        area: maps[i]['area'],
+        city: maps[i]['city'],
+        country: maps[i]['country'],
+        pinCode: maps[i]['pinCode'],
+        latitude: maps[i]['latitude'],
+        longitude: maps[i]['longitude'],
+      );
+    });
   }
+}
 
-  Future<double?> calculateSimilarity() async {
-    List<Address> savedAddresses = await DatabaseHelper.getAddresses();
+class Address {
+  final int? id;
+  final String doorNumber;
+  final String building;
+  final String street;
+  final String area;
+  final String city;
+  final String country;
+  final String pinCode;
+  final double latitude;
+  final double longitude;
 
-    if (savedAddresses.isEmpty) {
-      return null;
-    }
+  Address({
+    this.id,
+    required this.doorNumber,
+    required this.building,
+    required this.street,
+    required this.area,
+    required this.city,
+    required this.country,
+    required this.pinCode,
+    required this.latitude,
+    required this.longitude,
+  });
 
-    int totalFields = 7; // Total number of address fields
-
-    // Initialize total similarity count
-    int similarityCount = 0;
-    // Calculate similarity counts for each field
-    double highestPercentage = 0;
-    for (Address savedAddress in savedAddresses) {
-      int currentSimilarityCount = 0;
-      int flag = 0;
-      if (savedAddress.pinCode == pinCode && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-      if (savedAddress.country == country && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-      if (savedAddress.city == city && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-      if (savedAddress.area == area && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-      if (savedAddress.street == street && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-      if (savedAddress.building == building && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-      if (savedAddress.doorNumber == doorNumber && flag == 0) {
-        currentSimilarityCount++;
-      }
-      else
-        flag = 1;
-
-      // Update total similarity count if it's higher than current similarity count
-      if (currentSimilarityCount == totalFields) {
-        return 1.0; // 100% similarity
-      } else if (currentSimilarityCount > similarityCount) {
-        similarityCount = currentSimilarityCount;
-      }
-    }
-
-    // Calculate total similarity percentage
-    //double totalSimilarityPercentage = similarityCount / totalFields;
-    double similarityPercentage = similarityCount / totalFields;
-    if (similarityPercentage > highestPercentage) {
-      highestPercentage = similarityPercentage;
-      // return totalSimilarityPercentage;
-    }
-    return highestPercentage;
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'doorNumber': doorNumber,
+      'building': building,
+      'street': street,
+      'area': area,
+      'city': city,
+      'country': country,
+      'pinCode': pinCode,
+      'latitude': latitude,
+      'longitude': longitude,
+    };
   }
 }
