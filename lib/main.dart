@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'database/dbhelper.dart';
 
 void main() {
@@ -144,6 +145,13 @@ class _MyHomePageState extends State<MyHomePage> {
                       ),
                   ],
                 ),
+              SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () {
+                  navigateToLocation(latitude, longitude);
+                },
+                child: Text("Navigate"),
+              ),
             ],
           ),
         ),
@@ -154,15 +162,15 @@ class _MyHomePageState extends State<MyHomePage> {
   void convertAddressToLatLng() async {
     String address =
         "$doorNumber, $building, $street, $area, $city, $country, $pinCode";
-    address=address.toLowerCase();
+    address = address.toLowerCase();
     List<Location> locations = await locationFromAddress(address);
-    doorNumber=doorNumber.toLowerCase();
-    building=building.toLowerCase();
-    street=street.toLowerCase();
-    area=area.toLowerCase();
-    city=city.toLowerCase();
-    country=country.toLowerCase();
-    pinCode=pinCode.toLowerCase();
+    doorNumber = doorNumber.toLowerCase();
+    building = building.toLowerCase();
+    street = street.toLowerCase();
+    area = area.toLowerCase();
+    city = city.toLowerCase();
+    country = country.toLowerCase();
+    pinCode = pinCode.toLowerCase();
     if (locations.isNotEmpty) {
       setState(() {
         latitude = locations[0].latitude;
@@ -179,24 +187,26 @@ class _MyHomePageState extends State<MyHomePage> {
         return;
       }
 
-      if (similarityPercentage != null && similarityPercentage! >= 0.71&& similarityPercentage!=1.0) {
+      if (similarityPercentage != null &&
+          similarityPercentage! >= 0.71 &&
+          similarityPercentage != 1.0) {
         List<Address> savedAddresses = await DatabaseHelper.getAddresses();
-        List<Address> similarAddresses = savedAddresses.where((address) => calculateSimilarityCount(address) >= 5).toList();
+        List<Address> similarAddresses = savedAddresses
+            .where((address) => calculateSimilarityCount(address) >= 5)
+            .toList();
 
         if (similarAddresses.length >= 2) {
-          // Sort addresses by similarity to the new address
-          similarAddresses.sort(
-                  (a, b) => calculateSimilarityCount(b).compareTo(calculateSimilarityCount(a)));
+          similarAddresses.sort((a, b) =>
+              calculateSimilarityCount(b).compareTo(calculateSimilarityCount(a)));
 
-          // Use the coordinates of the two most similar addresses to estimate the new address coordinates
           Address firstSimilarAddress = similarAddresses[0];
           Address secondSimilarAddress = similarAddresses[1];
 
-          // Calculate average latitude and longitude of the two similar addresses
           double avgLatitude =
               (firstSimilarAddress.latitude + secondSimilarAddress.latitude) / 2;
-          double avgLongitude =
-              (firstSimilarAddress.longitude + secondSimilarAddress.longitude) / 2;
+          double avgLongitude = (firstSimilarAddress.longitude +
+              secondSimilarAddress.longitude) /
+              2;
 
           setState(() {
             latitude = avgLatitude;
@@ -208,7 +218,6 @@ class _MyHomePageState extends State<MyHomePage> {
               "Coordinates adjusted using addresses with IDs: ${firstSimilarAddress.id} and ${secondSimilarAddress.id}");
         }
       } else {
-        // Reset adjustedAddressId1 and adjustedAddressId2 when not using the mathematical adjustment logic
         setState(() {
           adjustedAddressId1 = null;
           adjustedAddressId2 = null;
@@ -216,7 +225,6 @@ class _MyHomePageState extends State<MyHomePage> {
       }
 
       if (similarityPercentage == null || similarityPercentage! < 0.71) {
-        // Use geocoding to obtain coordinates
         latitude = locations[0].latitude;
         longitude = locations[0].longitude;
       }
@@ -305,5 +313,14 @@ class _MyHomePageState extends State<MyHomePage> {
       flag = 1;
     }
     return similarityCount;
+  }
+
+  void navigateToLocation(double latitude, double longitude) async {
+    String url = 'https://www.google.com/maps/search/?api=1&query=$latitude,$longitude';
+    if (await canLaunch(url)) {
+      await launch(url);
+    } else {
+      print('Could not launch $url');
+    }
   }
 }
